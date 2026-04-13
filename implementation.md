@@ -1,5 +1,5 @@
 # FieldPulse — Implementation status
-document is the **single source of truth** for what is built, how it behaves, and how that compares to the contract in [planning.md](planning.md).  
+This document is the **single source of truth** for what is built, how it behaves, and how that compares to the contract in [planning.md](planning.md).  
 For **why** design choices were made, see [decision.md](decision.md). For **Redis keys and TTLs**, see [cache.md](cache.md). For **commands to run the stack**, see [setup.md](setup.md).
 ## 1. Runtime services
 | Service | Entrypoint | Default port / exposure | Role | Health |
@@ -61,7 +61,7 @@ Legend: **Yes** = matches intent; **Partial** = works with gaps; **No** = missin
 
 | Requirement | Status | Notes |
 |-------------|--------|--------|
-| Threshold evaluation on ingest | **Yes** | `AlertEvaluator` after metric persist (async) |
+| Threshold evaluation on ingest | **Yes** | `AlertEvaluator` after metric persist (async); `postMetricWrite` must not pass a context canceled on return (see [internal/services/telemetry_service.go](internal/services/telemetry_service.go)) |
 | Redis `alert:{device_id}` suppress duplicate fires ~5 min | **Yes** | Aligns with 300s TTL |
 | MQTT publish `alerts/{device_id}` | **Yes** | When publisher configured |
 | Silent detection: `last_seen`, >15 min → device update + MQTT | **Partial** | `StartSilentWatchdog` scans Redis; needs `last_seen` keys; no 15m integration test |
@@ -71,15 +71,15 @@ Legend: **Yes** = matches intent; **Partial** = works with gaps; **No** = missin
 
 | Item | Status | Notes |
 |------|--------|--------|
-| `GetActiveAlerts` with default `min_severity` | **No** | Proto default `UNSPECIFIED` → `.String()` filters on invalid DB severity → **empty lists** unless client sets severity or service maps UNSPECIFIED to “no filter” |
-| Count query matches list filters | **Partial** | Review [internal/db/alert_db.go](internal/db/alert_db.go) when severity filter is fixed |
+| `GetActiveAlerts` with default `min_severity` | **Yes** | [internal/services/alert_service.go](internal/services/alert_service.go): omit DB severity filter when `min_severity` is `UNSPECIFIED` / `0` (proto default no longer maps to a bogus `severity = …` clause) |
+| Count query matches list filters | **Yes** | [internal/db/alert_db.go](internal/db/alert_db.go): `COUNT(*)` uses the same optional `device_id` and `severity` predicates as the list query |
 
 ### 2.6 Unknown device on gRPC submit
 
 | Item | Status | Notes |
 |------|--------|--------|
-| FK violation on metrics → clear client error | **Partial** | Postgres `23503` surfaces as **Internal** in [internal/services/telemetry_service.go](internal/services/telemetry_service.go); not **NotFound** |
-| Integration test strictness | **Partial** | [test/integration_test.go](test/integration_test.go) `TestUnknownDeviceHandling` treats any error as pass |
+| FK violation on metrics → clear client error | **Yes** | Postgres `23503` (`*pgconn.PgError`) maps to gRPC **NotFound** in [internal/services/telemetry_service.go](internal/services/telemetry_service.go) (`insertFailureStatus`) |
+| Integration / E2E strictness | **Yes** | [test/integration_test.go](test/integration_test.go) `TestUnknownDeviceHandling` and [test/e2e_trace_test.go](test/e2e_trace_test.go) `TestE2ETraceErrorRecovery` require `codes.NotFound` |
 
 ### 2.7 Connector (planning §4.4)
 

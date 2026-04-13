@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	pb "fieldpulse.io/api/proto"
 	"fieldpulse.io/internal/db"
 	oteltracing "fieldpulse.io/internal/otel"
+	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -64,10 +66,10 @@ type metricWriteJob struct {
 // TelemetryService implements the telemetry gRPC service.
 type TelemetryService struct {
 	pb.UnimplementedTelemetryServiceServer
-	db        TelemetryStore
-	cache     TelemetryCacheStore
-	alertEval *AlertEvaluator
-	writeCh   chan metricWriteJob
+	db          TelemetryStore
+	cache       TelemetryCacheStore
+	alertEval   *AlertEvaluator
+	writeCh     chan metricWriteJob
 	writeCancel context.CancelFunc
 }
 
@@ -147,6 +149,30 @@ func (s *TelemetryService) runMetricWriteWorker(ctx context.Context) {
 	}
 }
 
+func insertFailureStatus(err error, batch bool) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return status.Error(codes.DeadlineExceeded, err.Error())
+	}
+	if errors.Is(err, context.Canceled) {
+		return status.Error(codes.Canceled, err.Error())
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+		return status.Error(codes.NotFound, "device not found")
+	}
+	// Some pgx/Timescale paths surface FK violations without an unwrap-able *pgconn.PgError.
+	if strings.Contains(err.Error(), "SQLSTATE 23503") {
+		return status.Error(codes.NotFound, "device not found")
+	}
+	if batch {
+		return status.Error(codes.Internal, fmt.Sprintf("batch insert failed: %v", err))
+	}
+	return status.Error(codes.Internal, fmt.Sprintf("failed to store metric: %v", err))
+}
+
 func (s *TelemetryService) SubmitMetric(ctx context.Context, req *pb.SubmitMetricRequest) (*pb.SubmitMetricResponse, error) {
 	newCtx, endSpan := oteltracing.TraceTelemetrySubmit(ctx, req.DeviceId, req.MetricName, req.Value)
 	defer endSpan()
@@ -180,20 +206,14 @@ func (s *TelemetryService) SubmitMetric(ctx context.Context, req *pb.SubmitMetri
 		select {
 		case err := <-done:
 			if err != nil {
-				if errors.Is(err, context.DeadlineExceeded) {
-					return nil, status.Error(codes.DeadlineExceeded, err.Error())
-				}
-				if errors.Is(err, context.Canceled) {
-					return nil, status.Error(codes.Canceled, err.Error())
-				}
-				return nil, status.Error(codes.Internal, fmt.Sprintf("failed to store metric: %v", err))
+				return nil, insertFailureStatus(err, false)
 			}
 		case <-newCtx.Done():
 			return nil, status.FromContextError(newCtx.Err()).Err()
 		}
 	} else {
 		if err := s.db.InsertMetric(newCtx, point); err != nil {
-			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to store metric: %v", err))
+			return nil, insertFailureStatus(err, false)
 		}
 		s.postMetricWrite(newCtx, point)
 	}
@@ -253,20 +273,14 @@ func (s *TelemetryService) SubmitBatch(ctx context.Context, req *pb.SubmitBatchR
 		select {
 		case err := <-done:
 			if err != nil {
-				if errors.Is(err, context.DeadlineExceeded) {
-					return nil, status.Error(codes.DeadlineExceeded, err.Error())
-				}
-				if errors.Is(err, context.Canceled) {
-					return nil, status.Error(codes.Canceled, err.Error())
-				}
-				return nil, status.Error(codes.Internal, fmt.Sprintf("batch insert failed: %v", err))
+				return nil, insertFailureStatus(err, true)
 			}
 		case <-ctx.Done():
 			return nil, status.FromContextError(ctx.Err()).Err()
 		}
 	} else {
 		if err := s.db.InsertMetricBatch(ctx, points); err != nil {
-			return nil, status.Error(codes.Internal, fmt.Sprintf("batch insert failed: %v", err))
+			return nil, insertFailureStatus(err, true)
 		}
 		seen := make(map[string]struct{})
 		for _, point := range points {
@@ -465,7 +479,9 @@ func (s *TelemetryService) postMetricWrite(ctx context.Context, point db.MetricP
 	defer cancel()
 	_ = s.cache.InvalidateMetricCache(pwCtx, point.DeviceID, point.MetricName)
 	_ = s.markLastSeen(pwCtx, point.DeviceID, point.Timestamp)
-	s.evaluateAsync(pwCtx, point.DeviceID, point.MetricName, point.Value)
+	// Do not pass pwCtx: defer cancel() runs when this returns, while EvaluateAsync
+	// starts a goroutine that would inherit a canceled context and skip threshold lookup.
+	s.evaluateAsync(context.Background(), point.DeviceID, point.MetricName, point.Value)
 }
 
 func (s *TelemetryService) evaluateAsync(ctx context.Context, deviceID, metricName string, value float64) {

@@ -165,7 +165,14 @@ func (s *AlertService) GetActiveAlerts(ctx context.Context, req *pb.GetActiveAle
 		limit = 100
 	}
 
-	alerts, total, err := s.db.GetActiveAlerts(ctx, req.DeviceId, req.MinSeverity.String(), limit, int(req.Offset))
+	// Do not pass MinSeverity.String() when unset — protobuf uses 0 (UNSPECIFIED) and String() becomes
+	// "ALERT_SEVERITY_UNSPECIFIED", which never matches DB values like "CRITICAL".
+	severityFilter := ""
+	if ms := req.GetMinSeverity(); ms != pb.AlertSeverity_ALERT_SEVERITY_UNSPECIFIED && ms != 0 {
+		severityFilter = ms.String()
+	}
+
+	alerts, total, err := s.db.GetActiveAlerts(ctx, req.GetDeviceId(), severityFilter, limit, int(req.Offset))
 	if err != nil {
 		return nil, status.Error(codes.Internal, fmt.Sprintf("query failed: %v", err))
 	}

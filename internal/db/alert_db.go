@@ -169,10 +169,15 @@ func (db *AlertDB) InsertAlert(ctx context.Context, alert Alert) error {
 func (db *AlertDB) GetActiveAlerts(ctx context.Context, deviceID, severity string, limit, offset int) ([]Alert, int64, error) {
 	countQuery := "SELECT COUNT(*) FROM alerts WHERE resolved_at IS NULL"
 	countArgs := []interface{}{}
-
+	n := 1
 	if deviceID != "" {
-		countQuery += " AND device_id = $1"
+		countQuery += fmt.Sprintf(" AND device_id = $%d", n)
 		countArgs = append(countArgs, deviceID)
+		n++
+	}
+	if severity != "" {
+		countQuery += fmt.Sprintf(" AND severity = $%d", n)
+		countArgs = append(countArgs, severity)
 	}
 
 	var total int64

@@ -117,12 +117,12 @@ func (m *mockAlertDB) ResolveAlert(ctx context.Context, alertID string) error {
 
 func (m *mockAlertDB) SilenceDevice(ctx context.Context, deviceID, metricName string, durationSeconds int, reason string) (string, error) {
 	silenceID := "sil_test_1"
-	
+
 	var metricNamePtr *string
 	if metricName != "" {
 		metricNamePtr = &metricName
 	}
-	
+
 	m.silences = append(m.silences, db.SilenceRule{
 		SilenceID:     silenceID,
 		DeviceID:      deviceID,
@@ -294,6 +294,30 @@ func TestGetActiveAlerts(t *testing.T) {
 
 	if len(resp.Alerts) != 1 {
 		t.Errorf("Expected 1 alert, got %d", len(resp.Alerts))
+	}
+}
+
+func TestGetActiveAlerts_WithMinSeverityFilter(t *testing.T) {
+	mock := &mockAlertDB{}
+	svc := NewAlertService(mock)
+	ctx := context.Background()
+
+	mock.alerts = append(mock.alerts,
+		db.Alert{AlertID: "a1", DeviceID: "dev_123", MetricName: "temperature", Severity: "CRITICAL", TriggeredAt: time.Now()},
+		db.Alert{AlertID: "a2", DeviceID: "dev_123", MetricName: "humidity", Severity: "WARNING", TriggeredAt: time.Now()},
+	)
+
+	req := &pb.GetActiveAlertsRequest{
+		DeviceId:    "dev_123",
+		Limit:       100,
+		MinSeverity: pb.AlertSeverity_CRITICAL,
+	}
+	resp, err := svc.GetActiveAlerts(ctx, req)
+	if err != nil {
+		t.Fatalf("GetActiveAlerts failed: %v", err)
+	}
+	if len(resp.Alerts) != 1 || resp.Alerts[0].AlertId != "a1" {
+		t.Errorf("expected 1 CRITICAL alert, got %+v", resp.Alerts)
 	}
 }
 

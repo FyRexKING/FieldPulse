@@ -3,12 +3,14 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 	"time"
 
 	pb "fieldpulse.io/api/proto"
 	"fieldpulse.io/internal/db"
+	"github.com/jackc/pgx/v5/pgconn"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -19,12 +21,12 @@ import (
 
 // mockTelemetryDB is a mock database for testing without real PostgreSQL.
 type mockTelemetryDB struct {
-	insertMetricFunc       func(ctx context.Context, point db.MetricPoint) error
-	insertMetricBatchFunc  func(ctx context.Context, points []db.MetricPoint) error
-	queryMetricsFunc       func(ctx context.Context, filter db.QueryFilter) ([]db.MetricPoint, error)
-	queryMetricsCountFunc  func(ctx context.Context, filter db.QueryFilter) (int64, error)
-	queryAggregatedFunc    func(ctx context.Context, agg db.AggregationQuery) ([]db.AggregationResult, error)
-	getMetricStatsFunc     func(ctx context.Context, deviceID, metricName string, startTime, endTime time.Time) (*db.MetricStats, error)
+	insertMetricFunc      func(ctx context.Context, point db.MetricPoint) error
+	insertMetricBatchFunc func(ctx context.Context, points []db.MetricPoint) error
+	queryMetricsFunc      func(ctx context.Context, filter db.QueryFilter) ([]db.MetricPoint, error)
+	queryMetricsCountFunc func(ctx context.Context, filter db.QueryFilter) (int64, error)
+	queryAggregatedFunc   func(ctx context.Context, agg db.AggregationQuery) ([]db.AggregationResult, error)
+	getMetricStatsFunc    func(ctx context.Context, deviceID, metricName string, startTime, endTime time.Time) (*db.MetricStats, error)
 }
 
 func (m *mockTelemetryDB) InsertMetric(ctx context.Context, point db.MetricPoint) error {
@@ -129,12 +131,12 @@ func TestSubmitMetric_ValidMetric(t *testing.T) {
 	}
 
 	req := &pb.SubmitMetricRequest{
-		DeviceId:               "device-001",
-		MetricName:             "temperature",
-		Value:                  23.5,
-		TimestampUnixSeconds:   0, // Use server time
-		Tags:                   map[string]string{"location": "room1"},
-		Status:                 pb.MetricStatus_METRIC_STATUS_OK,
+		DeviceId:             "device-001",
+		MetricName:           "temperature",
+		Value:                23.5,
+		TimestampUnixSeconds: 0, // Use server time
+		Tags:                 map[string]string{"location": "room1"},
+		Status:               pb.MetricStatus_METRIC_STATUS_OK,
 	}
 
 	// Act
@@ -275,6 +277,69 @@ func TestSubmitMetric_DatabaseError(t *testing.T) {
 	}
 }
 
+func TestSubmitMetric_ForeignKeyUnknownDevice(t *testing.T) {
+	service, mockDB, _ := setupTestService(t)
+	ctx := context.Background()
+
+	mockDB.insertMetricFunc = func(_ context.Context, _ db.MetricPoint) error {
+		return &pgconn.PgError{Code: "23503"}
+	}
+
+	req := &pb.SubmitMetricRequest{
+		DeviceId:   "device-001",
+		MetricName: "temperature",
+		Value:      23.5,
+	}
+
+	resp, err := service.SubmitMetric(ctx, req)
+	if resp != nil {
+		t.Fatal("expected nil response on error")
+	}
+	if s, ok := status.FromError(err); !ok || s.Code() != codes.NotFound {
+		t.Fatalf("expected NotFound for FK violation, got %v", err)
+	}
+}
+
+func TestSubmitMetric_ForeignKeyUnknownDevice_WrappedLikeDBLayer(t *testing.T) {
+	service, mockDB, _ := setupTestService(t)
+	ctx := context.Background()
+
+	mockDB.insertMetricFunc = func(_ context.Context, _ db.MetricPoint) error {
+		return fmt.Errorf("failed to insert metric: %w", &pgconn.PgError{Code: "23503"})
+	}
+
+	req := &pb.SubmitMetricRequest{
+		DeviceId:   "device-001",
+		MetricName: "temperature",
+		Value:      23.5,
+	}
+
+	_, err := service.SubmitMetric(ctx, req)
+	if s, ok := status.FromError(err); !ok || s.Code() != codes.NotFound {
+		t.Fatalf("expected NotFound for wrapped FK violation, got %v", err)
+	}
+}
+
+func TestSubmitMetric_ForeignKeyUnknownDevice_SQLStateInMessageOnly(t *testing.T) {
+	service, mockDB, _ := setupTestService(t)
+	ctx := context.Background()
+
+	mockDB.insertMetricFunc = func(_ context.Context, _ db.MetricPoint) error {
+		return errors.New(`failed to insert metric: ERROR: insert or update on table "metrics" violates foreign key (SQLSTATE 23503)`)
+	}
+
+	req := &pb.SubmitMetricRequest{
+		DeviceId:   "device-001",
+		MetricName: "temperature",
+		Value:      23.5,
+	}
+
+	_, err := service.SubmitMetric(ctx, req)
+	if s, ok := status.FromError(err); !ok || s.Code() != codes.NotFound {
+		t.Fatalf("expected NotFound when SQLSTATE 23503 appears only in message, got %v", err)
+	}
+}
+
 // ==================== SubmitBatch Tests ====================
 
 func TestSubmitBatch_ValidBatch(t *testing.T) {
@@ -314,6 +379,29 @@ func TestSubmitBatch_ValidBatch(t *testing.T) {
 
 	if len(capturedPoints) != 2 {
 		t.Errorf("expected 2 captured points, got %d", len(capturedPoints))
+	}
+}
+
+func TestSubmitBatch_ForeignKeyUnknownDevice(t *testing.T) {
+	service, mockDB, _ := setupTestService(t)
+	ctx := context.Background()
+
+	mockDB.insertMetricBatchFunc = func(_ context.Context, _ []db.MetricPoint) error {
+		return &pgconn.PgError{Code: "23503"}
+	}
+
+	req := &pb.SubmitBatchRequest{
+		Metrics: []*pb.SubmitMetricRequest{
+			{DeviceId: "device-001", MetricName: "temperature", Value: 1},
+		},
+	}
+
+	resp, err := service.SubmitBatch(ctx, req)
+	if resp != nil {
+		t.Fatal("expected nil response on error")
+	}
+	if s, ok := status.FromError(err); !ok || s.Code() != codes.NotFound {
+		t.Fatalf("expected NotFound for FK violation, got %v", err)
 	}
 }
 
@@ -536,12 +624,12 @@ func TestGetAggregations_ValidQuery(t *testing.T) {
 	}
 
 	req := &pb.GetAggregationsRequest{
-		DeviceId:           "device-001",
-		MetricName:         "temperature",
-		WindowSize:         pb.TimeWindowSize_TIME_WINDOW_SIZE_1_HOUR,
-		StartTime:          timestamppb.New(now.Add(-24 * time.Hour)),
-		EndTime:            timestamppb.New(now),
-		AggregationTypes:   []pb.AggregationType{pb.AggregationType_AGGREGATION_TYPE_AVG, pb.AggregationType_AGGREGATION_TYPE_MAX},
+		DeviceId:         "device-001",
+		MetricName:       "temperature",
+		WindowSize:       pb.TimeWindowSize_TIME_WINDOW_SIZE_1_HOUR,
+		StartTime:        timestamppb.New(now.Add(-24 * time.Hour)),
+		EndTime:          timestamppb.New(now),
+		AggregationTypes: []pb.AggregationType{pb.AggregationType_AGGREGATION_TYPE_AVG, pb.AggregationType_AGGREGATION_TYPE_MAX},
 	}
 
 	resp, err := service.GetAggregations(ctx, req)
