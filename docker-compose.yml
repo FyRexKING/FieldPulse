@@ -85,6 +85,9 @@ services:
       REDIS_ADDR: "redis:6379"
       ROOTCA_CERT_PATH: /app/certs/ca.crt
       ROOTCA_KEY_PATH: /app/certs/ca.key
+      OTEL_ENABLED: "${OTEL_ENABLED:-false}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-https://api.uptrace.dev}"
+      UPTRACE_DSN: "${UPTRACE_DSN:-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,6 +119,9 @@ services:
       MQTT_TOPIC: "devices/+/telemetry"
       MQTT_CLIENT_ID: "fieldpulse-telemetry-subscriber"
       DEVICE_SERVICE_ADDR: "device-service:50051"
+      OTEL_ENABLED: "${OTEL_ENABLED:-false}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-https://api.uptrace.dev}"
+      UPTRACE_DSN: "${UPTRACE_DSN:-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -147,6 +153,9 @@ services:
       DB_HOST: "postgres"
       DB_PORT: "5432"
       DB_NAME: "fieldpulse"
+      OTEL_ENABLED: "${OTEL_ENABLED:-false}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-https://api.uptrace.dev}"
+      UPTRACE_DSN: "${UPTRACE_DSN:-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -183,6 +192,9 @@ services:
     container_name: fieldpulse-connector
     environment:
       MQTT_REMOTE_CONFIG: /root/connector-config.yml
+      OTEL_ENABLED: "${OTEL_ENABLED:-false}"
+      OTEL_EXPORTER_OTLP_ENDPOINT: "${OTEL_EXPORTER_OTLP_ENDPOINT:-https://api.uptrace.dev}"
+      UPTRACE_DSN: "${UPTRACE_DSN:-}"
     depends_on:
       mqtt:
         condition: service_healthy
