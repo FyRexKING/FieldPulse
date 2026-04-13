@@ -165,9 +165,8 @@ curl -s http://localhost:3000/health
 
 ## Documentation tracked in git
 
-- **[DECISIONS.md](DECISIONS.md)** — architecture rationale  
-- **[CACHE.md](CACHE.md)** — Redis keys, TTLs, source of truth  
-- **[decision.md](decision.md)** — pointer to `DECISIONS.md`  
+- **[decision.md](decision.md)** — architecture rationale  
+- **[cache.md](cache.md)** — Redis keys, TTLs, source of truth  
 - **This file** — setup commands  
 
-**Note:** This repository’s `.gitignore` tracks only the Markdown files listed above (plus `decision.md`). A richer **`README.md`** may exist on your machine from earlier checkouts but is **not** committed to git in this configuration—use `DECISIONS.md` and `CACHE.md` as the shipped documentation.
+**Note:** This repository’s `.gitignore` tracks only the three Markdown files above. A richer **`README.md`** may exist locally but is **not** committed in this configuration.

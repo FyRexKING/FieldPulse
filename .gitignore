@@ -49,8 +49,7 @@ coverage.txt
 # Markdown: only these files are tracked in git
 *.md
 !decision.md
-!DECISIONS.md
-!CACHE.md
+!cache.md
 !setup.md
 
 # Ad-hoc Go build outputs in repo root (do not commit)
