@@ -1,0 +1,330 @@
+syntax = "proto3";
+
+package fieldpulse.api;
+
+option go_package = "fieldpulse.io/api/proto";
+
+import "google/protobuf/timestamp.proto";
+
+// MetricValue represents a single time-series data point.
+// Designed for efficient storage and querying of IoT device metrics.
+message MetricPoint {
+  // timestamp: Moment when metric was recorded (UTC)
+  google.protobuf.Timestamp timestamp = 1;
+
+  // device_id: Device identifier for attribution
+  // Must match an active device in Device Service
+  string device_id = 2;
+
+  // metric_name: Name of the measured quantity
+  // Examples: "temperature", "humidity", "power_consumption", "co2_level"
+  string metric_name = 3;
+
+  // value: The numeric measurement
+  // Range: Must be finite (no NaN or Inf)
+  double value = 4;
+
+  // tags: Optional key-value metadata for this sample
+  // Examples: {"location": "room-1", "sensor_model": "DHT22"}
+  map<string, string> tags = 5;
+
+  // status: Health status of the measurement
+  // OK = normal reading
+  // WARNING = reading outside expected range
+  // CRITICAL = reading indicates potential failure
+  MetricStatus status = 6;
+}
+
+// MetricStatus enum for measurement health classification
+enum MetricStatus {
+  METRIC_STATUS_UNSPECIFIED = 0;
+  METRIC_STATUS_OK = 1;
+  METRIC_STATUS_WARNING = 2;
+  METRIC_STATUS_CRITICAL = 3;
+}
+
+// SubmitMetricRequest ingests a single metric from a device
+message SubmitMetricRequest {
+  // device_id: Which device is sending this metric
+  string device_id = 1;
+
+  // metric_name: Type of measurement
+  string metric_name = 2;
+
+  // value: The numeric reading
+  double value = 3;
+
+  // timestamp_unix_seconds: Optional explicit timestamp (server uses current time if omitted)
+  int64 timestamp_unix_seconds = 4;
+
+  // tags: Optional metadata tags
+  map<string, string> tags = 5;
+
+  // status: Optional health status (defaults to OK)
+  MetricStatus status = 6;
+}
+
+// SubmitMetricResponse confirms metric acceptance
+message SubmitMetricResponse {
+  // success: Whether metric was persisted
+  bool success = 1;
+
+  // server_timestamp: Server-assigned timestamp for canonical ordering
+  google.protobuf.Timestamp server_timestamp = 2;
+
+  // message: Optional error or info message
+  string message = 3;
+}
+
+// SubmitBatchRequest submits multiple metrics atomically
+message SubmitBatchRequest {
+  // metrics: List of metrics to store (must not be empty)
+  repeated SubmitMetricRequest metrics = 1;
+}
+
+// SubmitBatchResponse confirms batch acceptance
+message SubmitBatchResponse {
+  // accepted_count: How many metrics were persisted
+  int32 accepted_count = 1;
+
+  // rejected_count: How many metrics were rejected (invalid device, out of range, etc)
+  int32 rejected_count = 2;
+
+  // server_timestamp: When batch was processed
+  google.protobuf.Timestamp server_timestamp = 3;
+
+  // message: Summary or error details
+  string message = 4;
+}
+
+// AggregationType defines supported time-window aggregations
+enum AggregationType {
+  AGGREGATION_TYPE_UNSPECIFIED = 0;
+  AGGREGATION_TYPE_AVG = 1;        // Average value
+  AGGREGATION_TYPE_MAX = 2;        // Maximum value
+  AGGREGATION_TYPE_MIN = 3;        // Minimum value
+  AGGREGATION_TYPE_COUNT = 4;      // Sample count
+  AGGREGATION_TYPE_P95 = 5;        // 95th percentile
+  AGGREGATION_TYPE_P99 = 6;        // 99th percentile
+  AGGREGATION_TYPE_SUM = 7;        // Total sum
+  AGGREGATION_TYPE_STDDEV = 8;     // Standard deviation
+}
+
+// QueryMetricsRequest searches for metric data with filters
+message QueryMetricsRequest {
+  // device_id: Filter by specific device (required)
+  string device_id = 1;
+
+  // metric_name: Filter by metric name (required)
+  string metric_name = 2;
+
+  // start_time: Query window start (inclusive)
+  google.protobuf.Timestamp start_time = 3;
+
+  // end_time: Query window end (exclusive)
+  google.protobuf.Timestamp end_time = 4;
+
+  // limit: Maximum results per page (default: 1000, max: 10000)
+  int32 limit = 5;
+
+  // offset: Pagination offset (for subsequent pages)
+  int32 offset = 6;
+
+  // order_ascending: Sort by timestamp ascending (default: false = descending)
+  bool order_ascending = 7;
+}
+
+// QueryMetricsResponse returns paginated metric points (streamed)
+message QueryMetricsResponse {
+  // points: Batch of metric points
+  repeated MetricPoint points = 1;
+
+  // has_more: Whether more results available
+  bool has_more = 2;
+
+  // total_count: Total matching metrics (approximate if large)
+  int64 total_count = 3;
+}
+
+// TimeWindow represents a bucket for aggregated metrics
+enum TimeWindowSize {
+  TIME_WINDOW_SIZE_UNSPECIFIED = 0;
+  TIME_WINDOW_SIZE_1_MINUTE = 1;
+  TIME_WINDOW_SIZE_5_MINUTES = 2;
+  TIME_WINDOW_SIZE_1_HOUR = 3;
+  TIME_WINDOW_SIZE_1_DAY = 4;
+}
+
+// AggregatedMetricPoint represents pre-calculated statistics for a time window
+message AggregatedMetricPoint {
+  // window_start: When this bucket starts (inclusive)
+  google.protobuf.Timestamp window_start = 1;
+
+  // window_end: When this bucket ends (exclusive)
+  google.protobuf.Timestamp window_end = 2;
+
+  // aggregations: Map of aggregation type to result
+  // E.g., "AVG" -> 23.5, "MAX" -> 28.3, "MIN" -> 19.1
+  map<string, double> aggregations = 3;
+
+  // count: Total samples in this window
+  int64 count = 4;
+
+  // last_value: Most recent raw value in window
+  double last_value = 5;
+}
+
+// GetAggregationsRequest queries pre-calculated aggregates
+message GetAggregationsRequest {
+  // device_id: Which device (required)
+  string device_id = 1;
+
+  // metric_name: Which metric (required)
+  string metric_name = 2;
+
+  // window_size: Time bucket granularity
+  TimeWindowSize window_size = 3;
+
+  // start_time: Query window start
+  google.protobuf.Timestamp start_time = 4;
+
+  // end_time: Query window end
+  google.protobuf.Timestamp end_time = 5;
+
+  // aggregation_types: Which aggregations to include (empty = all)
+  repeated AggregationType aggregation_types = 6;
+}
+
+// GetAggregationsResponse returns aggregated metrics
+message GetAggregationsResponse {
+  // aggregations: Time-ordered aggregated points
+  repeated AggregatedMetricPoint aggregations = 1;
+
+  // query_duration_ms: How long query took (for performance monitoring)
+  int32 query_duration_ms = 2;
+
+  // from_cache: Whether result came from cache
+  bool from_cache = 3;
+
+  // message: Status or notes
+  string message = 4;
+}
+
+// MetricStats represents summary statistics for a metric
+message MetricStats {
+  // device_id: Device being described
+  string device_id = 1;
+
+  // metric_name: Metric being described
+  string metric_name = 2;
+
+  // first_seen: When first reading was recorded
+  google.protobuf.Timestamp first_seen = 3;
+
+  // last_seen: When most recent reading was recorded
+  google.protobuf.Timestamp last_seen = 4;
+
+  // total_samples: Total readings ever recorded
+  int64 total_samples = 5;
+
+  // avg_value: Overall average across all time
+  double avg_value = 6;
+
+  // min_value: Lowest reading ever
+  double min_value = 7;
+
+  // max_value: Highest reading ever
+  double max_value = 8;
+
+  // stddev_value: Standard deviation across all readings
+  double stddev_value = 9;
+
+  // latest_value: Most recent reading
+  double latest_value = 10;
+
+  // latest_status: Health status of most recent reading
+  MetricStatus latest_status = 11;
+}
+
+// GetMetricStatsRequest queries metric statistics
+message GetMetricStatsRequest {
+  // device_id: Which device (required)
+  string device_id = 1;
+
+  // metric_name: Which metric (required)
+  string metric_name = 2;
+
+  // start_time: Optional filter (only stats for readings after this)
+  google.protobuf.Timestamp start_time = 3;
+
+  // end_time: Optional filter (only stats for readings before this)
+  google.protobuf.Timestamp end_time = 4;
+}
+
+// GetMetricStatsResponse returns metric statistics
+message GetMetricStatsResponse {
+  // stats: The collected statistics
+  MetricStats stats = 1;
+
+  // calculated_at: When stats were calculated
+  google.protobuf.Timestamp calculated_at = 2;
+}
+
+// TelemetryService manages IoT device metrics: ingestion, storage, and querying.
+//
+// This service provides a scalable, time-series optimized backend for device metrics.
+// It integrates with the Device Service for validation and TimescaleDB for storage.
+service TelemetryService {
+  // SubmitMetric ingests a single metric point from a device.
+  //
+  // Validates device existence, persists to TimescaleDB, and invalidates
+  // relevant cache entries. Server assigns canonical timestamp for ordering.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: device_id not found, value out of range, invalid metric_name
+  //   - INTERNAL: database error, cache error
+  rpc SubmitMetric(SubmitMetricRequest) returns (SubmitMetricResponse);
+
+  // SubmitBatch ingests multiple metrics atomically.
+  //
+  // All metrics succeed or all fail. Faster than repeated SubmitMetric calls.
+  // Useful for syncing buffered readings from devices.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: empty batch, invalid metric in batch
+  //   - INTERNAL: database error
+  rpc SubmitBatch(SubmitBatchRequest) returns (SubmitBatchResponse);
+
+  // QueryMetrics retrieves raw metric points (server-side streaming).
+  //
+  // Returns paginated results ordered by timestamp. Streaming provides
+  // low-latency access to first result without loading entire result set.
+  // Useful for dashboards and real-time analysis.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: invalid time range, limit out of bounds
+  //   - NOT_FOUND: device or metric doesn't exist
+  //   - DEADLINE_EXCEEDED: query timeout
+  rpc QueryMetrics(QueryMetricsRequest) returns (stream QueryMetricsResponse);
+
+  // GetAggregations retrieves pre-calculated metric aggregations.
+  //
+  // Returns statistics grouped by time windows (1m/5m/1h/1d). Much faster
+  // than raw queries for dashboards and historical trending. Results often
+  // cached by TimescaleDB continuous aggregates.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: invalid time range
+  //   - NOT_FOUND: device or metric doesn't exist
+  rpc GetAggregations(GetAggregationsRequest) returns (GetAggregationsResponse);
+
+  // GetMetricStats retrieves summary statistics for a metric.
+  //
+  // Returns min/max/avg/stddev across all readings (or filtered time range).
+  // Useful for anomaly detection and parameter tuning.
+  //
+  // Errors:
+  //   - INVALID_ARGUMENT: invalid time range
+  //   - NOT_FOUND: device or metric doesn't exist
+  rpc GetMetricStats(GetMetricStatsRequest) returns (GetMetricStatsResponse);
+}

@@ -1,0 +1,66 @@
+# Binaries
+/cmd/*/bin
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go build cache
+.cache/
+dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment & Secrets
+.env
+.env.local
+certs/*.key
+certs/ca.key
+!certs/*.crt
+
+# Database
+data/
+*.db
+*.sqlite
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+*.coverprofile
+coverage.txt
+
+# Temp
+/tmp
+/temp
+
+# Markdown documentation: only decision.md and cache.md are tracked
+*.md
+!decision.md
+!cache.md
+
+# Ad-hoc Go build outputs in repo root (do not commit)
+/alert-service
+/device-service
+/telemetry-service
+/main
+*.test
+
+# Mistaken duplicate module path (use ./api/proto instead)
+/fieldpulse.io/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Bad shell paste saved as filenames at repo root
+/e_dev*

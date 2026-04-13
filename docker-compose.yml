@@ -1,0 +1,238 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    container_name: fieldpulse-postgres
+    environment:
+      POSTGRES_USER: fieldpulse
+      POSTGRES_PASSWORD: fieldpulse_dev
+      POSTGRES_DB: fieldpulse
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations/001_init_device_registry.sql:/docker-entrypoint-initdb.d/001_init_device_registry.sql:ro
+      - ./migrations/002_timescale_telemetry.sql:/docker-entrypoint-initdb.d/002_timescale_telemetry.sql:ro
+      - ./migrations/003_alert_service.sql:/docker-entrypoint-initdb.d/003_alert_service.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fieldpulse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fieldpulse
+
+  redis:
+    image: redis:7-alpine
+    container_name: fieldpulse-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fieldpulse
+
+  mqtt:
+    image: eclipse-mosquitto:latest
+    container_name: fieldpulse-mqtt
+    ports:
+      - "8883:8883"
+      - "1883:1883"
+    volumes:
+      - ./mqtt/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./certs/ca.crt:/mosquitto/certs/ca.crt:ro
+      - ./certs/broker.crt:/mosquitto/certs/broker.crt:ro
+      - ./certs/broker.key:/mosquitto/certs/broker.key:ro
+      - mqtt_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-p", "1883", "-t", "healthcheck", "-m", "ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - fieldpulse
+
+  mqtt-remote:
+    image: eclipse-mosquitto:latest
+    container_name: fieldpulse-mqtt-remote
+    ports:
+      - "1884:1883"
+    volumes:
+      - ./mqtt/mosquitto-remote.conf:/mosquitto/config/mosquitto.conf
+      - mqtt_remote_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_pub", "-h", "localhost", "-p", "1883", "-t", "healthcheck", "-m", "ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - fieldpulse
+
+  device-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.device-service
+    container_name: fieldpulse-device-service
+    ports:
+      - "50051:50051"
+    environment:
+      POSTGRES_URI: "postgresql://fieldpulse:fieldpulse_dev@postgres:5432/fieldpulse"
+      REDIS_ADDR: "redis:6379"
+      ROOTCA_CERT_PATH: /app/certs/ca.crt
+      ROOTCA_KEY_PATH: /app/certs/ca.key
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./certs:/app/certs:ro
+    networks:
+      - fieldpulse
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "50051"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  telemetry-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.telemetry-service
+    container_name: fieldpulse-telemetry-service
+    ports:
+      - "50052:50052"
+    environment:
+      TELEMETRY_PORT: "50052"
+      POSTGRES_URI: "postgresql://fieldpulse:fieldpulse_dev@postgres:5432/fieldpulse"
+      REDIS_ADDR: "redis:6379"
+      MQTT_BROKER: "tcp://mqtt:1883"
+      MQTT_TOPIC: "devices/+/telemetry"
+      MQTT_CLIENT_ID: "fieldpulse-telemetry-subscriber"
+      DEVICE_SERVICE_ADDR: "device-service:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mqtt:
+        condition: service_healthy
+      device-service:
+        condition: service_healthy
+    networks:
+      - fieldpulse
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "50052"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  alert-service:
+    build:
+      context: .
+      dockerfile: Dockerfile.alert-service
+    container_name: fieldpulse-alert-service
+    ports:
+      - "50053:50053"
+    environment:
+      DB_USER: "fieldpulse"
+      DB_PASSWORD: "fieldpulse_dev"
+      DB_HOST: "postgres"
+      DB_PORT: "5432"
+      DB_NAME: "fieldpulse"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      telemetry-service:
+        condition: service_healthy
+    networks:
+      - fieldpulse
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "50053"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  simulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.simulator
+    container_name: fieldpulse-simulator
+    environment:
+      MQTT_BROKER: "tcp://mqtt:1883"
+    depends_on:
+      mqtt:
+        condition: service_healthy
+    networks:
+      - fieldpulse
+    restart: unless-stopped
+    command: ["./simulator", "--broker=tcp://mqtt:1883", "--devices=50", "--min-interval=2", "--max-interval=10", "--duplicates=0.03", "--anomalies=0.05"]
+
+  connector:
+    build:
+      context: .
+      dockerfile: Dockerfile.connector
+    container_name: fieldpulse-connector
+    environment:
+      MQTT_REMOTE_CONFIG: /root/connector-config.yml
+    depends_on:
+      mqtt:
+        condition: service_healthy
+      mqtt-remote:
+        condition: service_healthy
+      telemetry-service:
+        condition: service_healthy
+    volumes:
+      - ./connector-config.yml:/root/connector-config.yml:ro
+    networks:
+      - fieldpulse
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.api-gateway
+    container_name: fieldpulse-api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      DEVICE_SERVICE_ADDR: "device-service:50051"
+      TELEMETRY_SERVICE_ADDR: "telemetry-service:50052"
+      ALERT_SERVICE_ADDR: "alert-service:50053"
+      API_PORT: "3000"
+    depends_on:
+      device-service:
+        condition: service_healthy
+      telemetry-service:
+        condition: service_healthy
+      alert-service:
+        condition: service_healthy
+    networks:
+      - fieldpulse
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  postgres_data:
+  timescaledb_data:
+  redis_data:
+  mqtt_data:
+  mqtt_remote_data:
+
+networks:
+  fieldpulse:
+    driver: bridge

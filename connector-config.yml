@@ -1,0 +1,56 @@
+# Connector Configuration for External MQTT Brokers
+# This file defines multiple broker connections that the connector will bridge
+
+brokers:
+  # Primary cloud broker (example: AWS IoT Core)
+  - name: "cloud-primary"
+    broker_uri: "tls://iot.amazonaws.com:8883"
+    username: "clouduser"
+    password: "cloudpass"
+    client_id: "fieldpulse-connector-primary"
+    subscriptions:
+      - topic: "devices/+/data"
+        qos: 1
+        device_id_path: "segment:1"
+        metric_name: "temperature"
+    buffer_size: 1000
+    reconnect_delay_ms: 5000
+
+  # Secondary cloud broker (example: Azure IoT Hub)
+  - name: "cloud-secondary"
+    broker_uri: "tls://hub.azure-devices.net:8883"
+    username: "azureuser"
+    password: "azurepass"
+    client_id: "fieldpulse-connector-secondary"
+    subscriptions:
+      - topic: "telemetry/+/+"
+        qos: 1
+        device_id_path: "segment:1"
+        metric_name: "external_metric"
+    buffer_size: 1000
+    reconnect_delay_ms: 5000
+
+  # On-premises broker (example: local datacenter)
+  - name: "onprem"
+    broker_uri: "mqtt://on-prem-broker.local:1883"
+    username: "onpremuser"
+    password: "onprempass"
+    client_id: "fieldpulse-connector-onprem"
+    subscriptions:
+      - topic: "factory/+/metrics"
+        qos: 1
+        device_id_path: "segment:1"
+        metric_name: "factory_metric"
+    buffer_size: 500
+    reconnect_delay_ms: 3000
+
+# Telemetry service destination
+telemetry_service:
+  address: "telemetry-service:50052"
+  timeout_ms: 5000
+  retry_attempts: 3
+
+# Logging configuration
+logging:
+  level: "info"  # debug, info, warn, error
+  format: "json"  # text or json

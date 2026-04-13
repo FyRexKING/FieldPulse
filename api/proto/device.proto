@@ -1,0 +1,177 @@
+syntax = "proto3";
+
+package fieldpulse.api;
+
+option go_package = "fieldpulse.io/api/proto";
+
+import "google/protobuf/timestamp.proto";
+
+// CreateDeviceRequest provisions a new device with backend-generated certificates
+message CreateDeviceRequest {
+  // device_id: unique identifier for the device (e.g., "floor-3-node-17")
+  // Must be unique across all devices; used as CN in certificate
+  string device_id = 1;
+
+  // floor: physical location (e.g., "floor-3", "warehouse-2")
+  // For organizational grouping and filtering
+  string floor = 2;
+
+  // device_type: hardware type (e.g., "temperature-sensor", "vibration-monitor")
+  string device_type = 3;
+
+  // firmware_version: current firmware on device (e.g., "1.2.3")
+  string firmware_version = 4;
+}
+
+// CreateDeviceResponse returns the complete provisioning bundle
+// Device is now provisioned and ready to connect to the platform
+message CreateDeviceResponse {
+  // device_id: echo back for confirmation
+  string device_id = 1;
+
+  // broker_url: MQTT broker address device should connect to
+  // Format: "mqtts://broker.fieldpulse.internal:8883"
+  string broker_url = 2;
+
+  // client_cert_pem: Device's signed client certificate (PEM-encoded)
+  // Signed by platform RootCA, CN = device_id
+  // Valid for 1 year; device retains copy for future reconnects
+  bytes client_cert_pem = 3;
+
+  // client_key_pem: Device's private key (PEM-encoded, ECDSA P-256)
+  // CRITICAL: Returned once only. If lost, device must be re-provisioned
+  // Must not be stored elsewhere or shared
+  bytes client_key_pem = 4;
+
+  // ca_pem: Platform RootCA certificate (PEM-encoded)
+  // Device uses this to verify the broker's server certificate (prevent MITM)
+  // Safe to distribute; same for all devices
+  bytes ca_pem = 5;
+
+  // provisioned_at: timestamp when device was provisioned
+  google.protobuf.Timestamp provisioned_at = 6;
+}
+
+// GetDeviceRequest queries device information
+message GetDeviceRequest {
+  // device_id: unique device identifier
+  string device_id = 1;
+}
+
+// DeviceStatus: current operational state
+enum DeviceStatus {
+  DEVICE_STATUS_UNSPECIFIED = 0;
+  DEVICE_STATUS_ACTIVE = 1;      // Normal operation
+  DEVICE_STATUS_SILENT = 2;      // No telemetry for 15+ minutes
+  DEVICE_STATUS_DEGRADED = 3;    // Operating with issues
+  DEVICE_STATUS_INACTIVE = 4;    // Offline/maintenance
+}
+
+// Device: device registry record
+message Device {
+  // device_id: unique identifier
+  string device_id = 1;
+
+  // floor: location
+  string floor = 2;
+
+  // device_type: hardware type
+  string device_type = 3;
+
+  // firmware_version: running firmware
+  string firmware_version = 4;
+
+  // status: current operational state
+  DeviceStatus status = 5;
+
+  // certificate_cn: certificate common name (always matches device_id)
+  string certificate_cn = 6;
+
+  // provisioned_at: when device was first provisioned
+  google.protobuf.Timestamp provisioned_at = 7;
+
+  // last_seen: last telemetry timestamp from this device
+  google.protobuf.Timestamp last_seen = 8;
+
+  // created_at: database record creation time
+  google.protobuf.Timestamp created_at = 9;
+
+  // updated_at: last update to this record
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+// GetDeviceResponse returns device information and certificate metadata
+message GetDeviceResponse {
+  // device: the device record
+  Device device = 1;
+
+  // certificate_hash: SHA256 hash of device's signed certificate
+  // Used for revocation checks and audit
+  string certificate_hash = 2;
+
+  // certificate_expires_at: certificate expiration time
+  google.protobuf.Timestamp certificate_expires_at = 3;
+}
+
+// ListDevicesRequest queries multiple devices with optional filtering
+message ListDevicesRequest {
+  // filter_floor: optional floor filter
+  string filter_floor = 1;
+
+  // filter_status: optional status filter
+  DeviceStatus filter_status = 2;
+
+  // limit: max results (default 100, max 1000)
+  int32 limit = 3;
+
+  // offset: pagination offset
+  int32 offset = 4;
+}
+
+// ListDevicesResponse returns paginated device list
+message ListDevicesResponse {
+  // devices: list of device records
+  repeated Device devices = 1;
+
+  // total_count: total matching devices (for pagination)
+  int64 total_count = 2;
+}
+
+// UpdateDeviceStatusRequest changes device operational state
+message UpdateDeviceStatusRequest {
+  // device_id: which device to update
+  string device_id = 1;
+
+  // new_status: new operational state
+  DeviceStatus new_status = 2;
+}
+
+// UpdateDeviceStatusResponse confirms the status change
+message UpdateDeviceStatusResponse {
+  // device: updated device record
+  Device device = 1;
+
+  // status_changed_at: timestamp of change
+  google.protobuf.Timestamp status_changed_at = 2;
+}
+
+// DeviceService manages device provisioning, registration, and lifecycle
+service DeviceService {
+  // CreateDevice provisions a new device with full certificate bundle
+  // Server generates keypair, signs certificate, returns connection credentials
+  // Device is ready to connect immediately after receiving response
+  rpc CreateDevice(CreateDeviceRequest) returns (CreateDeviceResponse);
+
+  // GetDevice retrieves device information including certificate metadata
+  // Uses strong consistency: always reads from PostgreSQL, then warms cache
+  rpc GetDevice(GetDeviceRequest) returns (GetDeviceResponse);
+
+  // ListDevices returns paginated device list with optional filtering
+  // Strong consistency: always reads from PostgreSQL
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+
+  // UpdateDeviceStatus marks device as active/silent/degraded/inactive
+  // Updates PostgreSQL immediately, then invalidates cache
+  // Alerts other services via MQTT event
+  rpc UpdateDeviceStatus(UpdateDeviceStatusRequest) returns (UpdateDeviceStatusResponse);
+}

@@ -1,0 +1,224 @@
+syntax = "proto3";
+
+package fieldpulse.api;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/empty.proto";
+
+option go_package = "fieldpulse.io/api/proto";
+
+// AlertService provides alert management, threshold evaluation, and silencing for device metrics.
+service AlertService {
+  // CreateThreshold creates a new alert threshold for a device metric.
+  rpc CreateThreshold(CreateThresholdRequest) returns (CreateThresholdResponse);
+
+  // GetThresholds retrieves all thresholds for a device or metric.
+  rpc GetThresholds(GetThresholdsRequest) returns (GetThresholdsResponse);
+
+  // UpdateThreshold modifies an existing alert threshold.
+  rpc UpdateThreshold(UpdateThresholdRequest) returns (UpdateThresholdResponse);
+
+  // DeleteThreshold removes an alert threshold.
+  rpc DeleteThreshold(DeleteThresholdRequest) returns (google.protobuf.Empty);
+
+  // GetActiveAlerts retrieves alerts triggered in the last N seconds (real-time dashboard view).
+  rpc GetActiveAlerts(GetActiveAlertsRequest) returns (GetActiveAlertsResponse);
+
+  // QueryAlertHistory retrieves historical alerts within a time range (archive queries).
+  rpc QueryAlertHistory(QueryAlertHistoryRequest) returns (stream QueryAlertHistoryResponse);
+
+  // SilenceAlert silences a specific alert by device and metric for a duration.
+  rpc SilenceAlert(SilenceAlertRequest) returns (SilenceAlertResponse);
+
+  // GetSilenceState retrieves active silencing rules for a device.
+  rpc GetSilenceState(GetSilenceStateRequest) returns (GetSilenceStateResponse);
+
+  // ClearSilence removes all silencing for a device.
+  rpc ClearSilence(ClearSilenceRequest) returns (google.protobuf.Empty);
+
+  // GetAlertStats retrieves aggregated alert statistics (total fired, by severity, etc).
+  rpc GetAlertStats(GetAlertStatsRequest) returns (GetAlertStatsResponse);
+}
+
+// ==================== Threshold Management ====================
+
+message CreateThresholdRequest {
+  string device_id = 1;           // Device to apply threshold to
+  string metric_name = 2;         // Metric name (e.g., "temperature", "humidity")
+  ThresholdType type = 3;         // High/Low/Change threshold
+  double lower_bound = 4;         // Lower bound (required if type=LOW or type=RANGE)
+  double upper_bound = 5;         // Upper bound (required if type=HIGH or type=RANGE)
+  double change_percent = 6;      // Percent change for CHANGE type
+  AlertSeverity severity = 7;     // Alert severity (CRITICAL, WARNING, INFO)
+  bool enabled = 8;               // Is threshold active
+}
+
+message CreateThresholdResponse {
+  string threshold_id = 1;
+  google.protobuf.Timestamp created_at = 2;
+}
+
+message GetThresholdsRequest {
+  string device_id = 1;           // Filter by device (required)
+  string metric_name = 2;         // Optional filter by metric
+  bool only_enabled = 3;          // If true, return only enabled thresholds
+}
+
+message Threshold {
+  string threshold_id = 1;
+  string device_id = 2;
+  string metric_name = 3;
+  ThresholdType type = 4;
+  double lower_bound = 5;
+  double upper_bound = 6;
+  double change_percent = 7;
+  AlertSeverity severity = 8;
+  bool enabled = 9;
+  google.protobuf.Timestamp created_at = 10;
+  google.protobuf.Timestamp updated_at = 11;
+}
+
+message GetThresholdsResponse {
+  repeated Threshold thresholds = 1;
+  int32 total_count = 2;
+}
+
+message UpdateThresholdRequest {
+  string threshold_id = 1;
+  optional double lower_bound = 2;
+  optional double upper_bound = 3;
+  optional double change_percent = 4;
+  optional AlertSeverity severity = 5;
+  optional bool enabled = 6;
+}
+
+message UpdateThresholdResponse {
+  string threshold_id = 1;
+  google.protobuf.Timestamp updated_at = 2;
+}
+
+message DeleteThresholdRequest {
+  string threshold_id = 1;
+}
+
+// ==================== Alert Queries ====================
+
+message GetActiveAlertsRequest {
+  optional string device_id = 1;          // Filter by device (optional)
+  optional AlertSeverity min_severity = 2; // Filter by severity (optional)
+  int32 limit = 3;                        // Max results (default 100)
+  int32 offset = 4;                       // Pagination offset
+}
+
+message Alert {
+  string alert_id = 1;
+  string device_id = 2;
+  string metric_name = 3;
+  double metric_value = 4;
+  ThresholdType threshold_type = 5;
+  double threshold_value = 6;
+  AlertSeverity severity = 7;
+  string message = 8;                         // Human-readable (e.g., "Temperature > 100°C")
+  bool is_silenced = 9;                       // True if alert is currently silenced
+  google.protobuf.Timestamp triggered_at = 10;
+  google.protobuf.Timestamp resolved_at = 11; // Null if still active
+}
+
+message GetActiveAlertsResponse {
+  repeated Alert alerts = 1;
+  int32 total_count = 2;
+  int32 triggered_count = 3;  // Currently active (unresolved) alerts
+}
+
+message QueryAlertHistoryRequest {
+  optional string device_id = 1;                       // Filter by device
+  optional string metric_name = 2;            // Filter by metric (optional)
+  google.protobuf.Timestamp start_time = 3;  // Query start time
+  google.protobuf.Timestamp end_time = 4;    // Query end time
+  optional AlertSeverity severity = 5;       // Filter by severity (optional)
+  int32 limit = 6;                           // Max results per stream (default 100)
+}
+
+message QueryAlertHistoryResponse {
+  repeated Alert alerts = 1;
+  bool has_more = 2;  // True if more results available
+}
+
+// ==================== Alert Silencing ====================
+
+message SilenceAlertRequest {
+  string device_id = 1;
+  optional string metric_name = 2;  // If omitted, silence ALL metrics for device
+  int32 duration_seconds = 3;       // Duration to silence (e.g., 3600 for 1 hour)
+  string reason = 4;                // Reason for silencing
+}
+
+message SilenceAlertResponse {
+  string silence_id = 1;
+  google.protobuf.Timestamp silenced_until = 2;
+}
+
+message GetSilenceStateRequest {
+  string device_id = 1;
+}
+
+message SilenceRule {
+  string silence_id = 1;
+  optional string metric_name = 2; // Null means all metrics
+  google.protobuf.Timestamp silenced_until = 3;
+  string reason = 4;
+}
+
+message GetSilenceStateResponse {
+  repeated SilenceRule active_rules = 1;
+  bool device_fully_silenced = 2;  // True if all metrics are silenced
+}
+
+message ClearSilenceRequest {
+  string device_id = 1;
+}
+
+// ==================== Alert Statistics ====================
+
+message GetAlertStatsRequest {
+  string device_id = 1;
+  google.protobuf.Timestamp start_time = 2;
+  google.protobuf.Timestamp end_time = 3;
+}
+
+message AlertStatsPoint {
+  AlertSeverity severity = 1;
+  int32 count = 2;
+}
+
+message GetAlertStatsResponse {
+  int32 total_alerts = 1;
+  int32 active_alerts = 2;      // Currently unresolved
+  int32 resolved_alerts = 3;
+  repeated AlertStatsPoint by_severity = 4;  // Count per severity level
+  int32 silenced_count = 5;
+}
+
+// ==================== Enums ====================
+
+enum ThresholdType {
+  THRESHOLD_TYPE_UNSPECIFIED = 0;
+  HIGH = 1;      // Alert if metric > upper_bound
+  LOW = 2;       // Alert if metric < lower_bound
+  RANGE = 3;     // Alert if metric < lower_bound OR > upper_bound
+  CHANGE = 4;    // Alert if metric changes by > change_percent
+}
+
+enum AlertSeverity {
+  ALERT_SEVERITY_UNSPECIFIED = 0;
+  CRITICAL = 1;  // Immediate action required
+  WARNING = 2;   // Monitor closely
+  INFO = 3;      // Informational
+}
+
+enum AlertStatus {
+  ALERT_STATUS_UNSPECIFIED = 0;
+  TRIGGERED = 1;   // Currently active
+  RESOLVED = 2;    // Resolved (metric now in range)
+  SILENCED = 3;    // Active but silenced
+}

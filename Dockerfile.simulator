@@ -1,0 +1,16 @@
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /app
+
+COPY . .
+RUN go mod tidy -compat=1.25 && \
+	CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o simulator ./cmd/simulator
+
+FROM alpine:3.18
+
+WORKDIR /root/
+
+COPY --from=builder /app/simulator .
+
+ENTRYPOINT ["./simulator"]
+CMD ["--devices=50", "--min-interval=2", "--max-interval=10", "--duplicates=0.03", "--anomalies=0.05", "--duration=3600"]

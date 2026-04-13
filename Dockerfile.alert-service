@@ -1,0 +1,27 @@
+FROM golang:1.25-alpine AS builder
+
+WORKDIR /app
+
+# Copy entire project with go.mod, go.sum, and api/proto
+COPY . .
+
+# Normalize module metadata and build alert service
+RUN go mod tidy -compat=1.25 && \
+    CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o alert-service ./cmd/alert-service
+
+# Runtime stage
+FROM alpine:3.18
+
+WORKDIR /root/
+
+# Copy binary
+COPY --from=builder /app/alert-service .
+
+# Expose gRPC port
+EXPOSE 50053
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:50053/health || exit 1
+
+ENTRYPOINT ["./alert-service"]
