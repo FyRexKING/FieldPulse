@@ -165,8 +165,11 @@ curl -s http://localhost:3000/health
 
 ## Documentation tracked in git
 
+- **[README.md](README.md)** — project entry and quick links  
+- **[implementation.md](implementation.md)** — features, services, status vs `planning.md`, test gaps  
 - **[decision.md](decision.md)** — architecture rationale  
 - **[cache.md](cache.md)** — Redis keys, TTLs, source of truth  
 - **This file** — setup commands  
+- **[planning.md](planning.md)** — execution contract (spec)
 
-**Note:** This repository’s `.gitignore` tracks only the three Markdown files above. A richer **`README.md`** may exist locally but is **not** committed in this configuration.
+**Note:** Other `*.md` files are ignored by `.gitignore` so local notes do not clutter the repo.

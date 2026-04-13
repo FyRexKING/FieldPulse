@@ -48,6 +48,9 @@ coverage.txt
 
 # Markdown: only these files are tracked in git
 *.md
+!README.md
+!implementation.md
+!planning.md
 !decision.md
 !cache.md
 !setup.md
