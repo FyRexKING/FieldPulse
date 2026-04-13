@@ -43,8 +43,9 @@ coverage.txt
 /tmp
 /temp
 
-# Markdown documentation: only decision.md and cache.md are tracked
+# Markdown documentation: only these .md files are tracked
 *.md
+!README.md
 !decision.md
 !cache.md
 
