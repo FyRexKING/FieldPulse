@@ -12,7 +12,9 @@ import (
 
 	pb "fieldpulse.io/api/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // TestE2ETraceFlow validates full system tracing:
@@ -163,9 +165,6 @@ func TestE2ETraceFlow(t *testing.T) {
 
 	t.Logf("  ✓ High metric submitted (threshold evaluation async triggered)")
 
-	// Allow time for async alert evaluation
-	time.Sleep(500 * time.Millisecond)
-
 	// ========== SPAN 5: Verify Alert Generation ==========
 	t.Log("\n[TRACE SPAN 5] Alert: alert.get_active")
 	t.Logf("  Querying active alerts on device: %s", deviceID)
@@ -175,16 +174,24 @@ func TestE2ETraceFlow(t *testing.T) {
 		Limit:    10,
 	}
 
-	activeAlertsResp, err := alertClient.GetActiveAlerts(ctx, activeAlertsReq)
-	if err != nil {
-		t.Fatalf("Failed to get active alerts: %v", err)
+	var activeAlertsResp *pb.GetActiveAlertsResponse
+	for start := time.Now(); time.Since(start) < 10*time.Second; time.Sleep(200 * time.Millisecond) {
+		activeAlertsResp, err = alertClient.GetActiveAlerts(ctx, activeAlertsReq)
+		if err != nil {
+			t.Fatalf("Failed to get active alerts: %v", err)
+		}
+		if len(activeAlertsResp.Alerts) > 0 {
+			break
+		}
 	}
 
 	t.Logf("  ✓ Active alerts retrieved:")
 	t.Logf("    - device.id: %s", deviceID)
 	t.Logf("    - alert_count: %d", len(activeAlertsResp.Alerts))
 
-	if len(activeAlertsResp.Alerts) > 0 {
+	if len(activeAlertsResp.Alerts) == 0 {
+		t.Errorf("expected at least one active alert within 10s after threshold breach")
+	} else {
 		t.Logf("    ✓ Alert triggered as expected (exceeding threshold)")
 		for i, alert := range activeAlertsResp.Alerts {
 			t.Logf("      Alert %d:", i+1)
@@ -194,8 +201,6 @@ func TestE2ETraceFlow(t *testing.T) {
 			t.Logf("        - threshold_value: %.2f", alert.ThresholdValue)
 			t.Logf("        - triggered_at: %v", alert.TriggeredAt.AsTime())
 		}
-	} else {
-		t.Logf("    ⚠️ No alerts generated (async evaluation may not have completed)")
 	}
 
 	// ========== SPAN 6: Query Metrics to Verify Storage ==========
@@ -413,8 +418,13 @@ func TestE2ETraceErrorRecovery(t *testing.T) {
 	if err == nil {
 		t.Errorf("Expected error for unknown device, got success")
 	} else {
-		t.Logf("✓ Correctly rejected metric on unknown device")
-		t.Logf("  Error: %v", err)
+		st, ok := status.FromError(err)
+		if !ok || st.Code() != codes.NotFound {
+			t.Errorf("expected NotFound for unknown device, got: %v", err)
+		} else {
+			t.Logf("✓ Correctly rejected metric on unknown device (NotFound)")
+			t.Logf("  Error: %v", err)
+		}
 	}
 
 	// ========== ERROR TRACE 4: Invalid Metric ==========

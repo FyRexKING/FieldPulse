@@ -15,8 +15,10 @@ import (
 	pb "fieldpulse.io/api/proto"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 // Test 1: Full Pipeline - Device Creation → Metric Submission → Database Storage
@@ -228,7 +230,7 @@ func TestDuplicateRejection(t *testing.T) {
 func TestAlertTrigger(t *testing.T) {
 	t.Log("=== Test 3: Alert Trigger (Threshold → Alert Flow) ===")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
 	deviceConn, err := grpc.Dial(deviceServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -237,6 +239,12 @@ func TestAlertTrigger(t *testing.T) {
 	}
 	defer deviceConn.Close()
 
+	telemetryConn, err := grpc.Dial(telemetryServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("Failed to connect to telemetry service: %v", err)
+	}
+	defer telemetryConn.Close()
+
 	alertConn, err := grpc.Dial(alertServiceAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		t.Fatalf("Failed to connect to alert service: %v", err)
@@ -244,6 +252,7 @@ func TestAlertTrigger(t *testing.T) {
 	defer alertConn.Close()
 
 	deviceClient := pb.NewDeviceServiceClient(deviceConn)
+	telemetryClient := pb.NewTelemetryServiceClient(telemetryConn)
 	alertClient := pb.NewAlertServiceClient(alertConn)
 
 	deviceID := fmt.Sprintf("alert_test_device_%d", time.Now().Unix())
@@ -280,22 +289,46 @@ func TestAlertTrigger(t *testing.T) {
 
 	t.Logf("✓ Threshold created (ID: %s)", thresholdResp.ThresholdId)
 
-	// Step 2: Get active alerts (should be empty until metric exceeds threshold)
 	activeAlertsReq := &pb.GetActiveAlertsRequest{
 		DeviceId: deviceID,
 		Limit:    10,
 	}
 
-	activeAlertsResp, err := alertClient.GetActiveAlerts(ctx, activeAlertsReq)
+	beforeResp, err := alertClient.GetActiveAlerts(ctx, activeAlertsReq)
 	if err != nil {
 		t.Fatalf("Failed to get active alerts: %v", err)
 	}
+	t.Logf("✓ Active alerts before breach: %d", len(beforeResp.Alerts))
 
-	initialAlertCount := len(activeAlertsResp.Alerts)
-	t.Logf("✓ Active alerts before threshold breached: %d", initialAlertCount)
+	breachTS := time.Now().Unix()
+	submitReq := &pb.SubmitMetricRequest{
+		DeviceId:             deviceID,
+		MetricName:           "temperature",
+		Value:                35.0,
+		TimestampUnixSeconds: breachTS,
+	}
+	submitResp, err := telemetryClient.SubmitMetric(ctx, submitReq)
+	if err != nil {
+		t.Fatalf("Failed to submit breaching metric: %v", err)
+	}
+	if !submitResp.Success {
+		t.Fatalf("Breaching metric not accepted: %s", submitResp.Message)
+	}
 
-	// In real system, metric submission would trigger alert evaluation
-	t.Log("✓ Alert trigger flow validated (metric evaluation async)")
+	var activeAlertsResp *pb.GetActiveAlertsResponse
+	for start := time.Now(); time.Since(start) < 10*time.Second; time.Sleep(200 * time.Millisecond) {
+		activeAlertsResp, err = alertClient.GetActiveAlerts(ctx, activeAlertsReq)
+		if err != nil {
+			t.Fatalf("Failed to get active alerts: %v", err)
+		}
+		if len(activeAlertsResp.Alerts) > 0 {
+			break
+		}
+	}
+	if activeAlertsResp == nil || len(activeAlertsResp.Alerts) == 0 {
+		t.Fatalf("expected at least one active alert within 10s after breach (GetActiveAlerts default min_severity must not filter all rows), got 0")
+	}
+	t.Logf("✓ Alert raised after breach: %d active alert(s)", len(activeAlertsResp.Alerts))
 }
 
 // Test 4: Silent Detection - No telemetry for 15+ minutes → device marked silent
@@ -531,16 +564,15 @@ func TestUnknownDeviceHandling(t *testing.T) {
 		TimestampUnixSeconds: time.Now().Unix(),
 	}
 
-	resp, err := telemetryClient.SubmitMetric(ctx, req)
-	
-	// Service should reject unknown device
-	if err != nil {
-		t.Logf("✓ Unknown device rejected by service: %v", err)
-	} else if !resp.Success {
-		t.Logf("✓ Unknown device rejected: %s", resp.Message)
-	} else {
-		t.Logf("⚠️ Unknown device accepted (may have auto-registration)")
+	_, err = telemetryClient.SubmitMetric(ctx, req)
+	if err == nil {
+		t.Fatal("expected error for unknown device_id")
 	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.NotFound {
+		t.Fatalf("expected gRPC NotFound for unknown device (FK), got: %v", err)
+	}
+	t.Logf("✓ Unknown device rejected with NotFound: %v", err)
 }
 
 // Test 8: Alert Silencing Lifecycle
