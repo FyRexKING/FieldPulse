@@ -1,14 +1,7 @@
 # FieldPulse — Implementation status
-
-This document is the **single source of truth** for what is built, how it behaves, and how that compares to the contract in [planning.md](planning.md).  
+document is the **single source of truth** for what is built, how it behaves, and how that compares to the contract in [planning.md](planning.md).  
 For **why** design choices were made, see [decision.md](decision.md). For **Redis keys and TTLs**, see [cache.md](cache.md). For **commands to run the stack**, see [setup.md](setup.md).
-
-**Last reviewed:** 2026-04-13 (repository snapshot).
-
----
-
 ## 1. Runtime services
-
 | Service | Entrypoint | Default port / exposure | Role | Health |
 |--------|------------|-------------------------|------|--------|
 | **PostgreSQL + Timescale** | Docker `timescale/timescaledb` | `5432` | Devices, metrics hypertable, alerts, thresholds, silences | Migrations on init; compression + retention policies in SQL |
