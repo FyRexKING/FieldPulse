@@ -39,15 +39,19 @@ Thumbs.db
 *.coverprofile
 coverage.txt
 
+# Plain text artifacts (no .txt tracked)
+*.txt
+
 # Temp
 /tmp
 /temp
 
-# Markdown documentation: only these .md files are tracked
+# Markdown: only these files are tracked in git
 *.md
-!README.md
 !decision.md
-!cache.md
+!DECISIONS.md
+!CACHE.md
+!setup.md
 
 # Ad-hoc Go build outputs in repo root (do not commit)
 /alert-service

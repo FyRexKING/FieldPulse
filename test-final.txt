@@ -1,3 +1,0 @@
-../go/pkg/mod/go.opentelemetry.io/auto/sdk@v1.2.1/internal/telemetry/value.go:8:2: package cmp is not in GOROOT (/usr/lib/go-1.18/src/cmp)
-../go/pkg/mod/go.opentelemetry.io/auto/sdk@v1.2.1/limit.go:7:2: package log/slog is not in GOROOT (/usr/lib/go-1.18/src/log/slog)
-../go/pkg/mod/golang.org/x/sys@v0.42.0/unix/syscall_linux.go:16:2: package slices is not in GOROOT (/usr/lib/go-1.18/src/slices)
