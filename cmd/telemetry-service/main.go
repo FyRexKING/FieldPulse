@@ -14,6 +14,7 @@ import (
 	"fieldpulse.io/internal/cache"
 	"fieldpulse.io/internal/db"
 	"fieldpulse.io/internal/mqtt"
+	"fieldpulse.io/internal/otel"
 	"fieldpulse.io/internal/services"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -24,6 +25,14 @@ import (
 )
 
 func main() {
+	if err := otel.InitTracing("telemetry-service"); err != nil {
+		log.Printf("⚠️ tracing initialization failed: %v", err)
+	} else {
+		defer func() {
+			_ = otel.ShutdownTracing(context.Background())
+		}()
+	}
+
 	config := loadConfig()
 	log.Printf("Starting Telemetry Service (port %s)", config.Port)
 

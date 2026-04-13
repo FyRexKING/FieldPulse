@@ -12,6 +12,7 @@ import (
 	pb "fieldpulse.io/api/proto"
 	"fieldpulse.io/internal/certs"
 	"fieldpulse.io/internal/db"
+	"fieldpulse.io/internal/otel"
 	"fieldpulse.io/internal/services"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -39,6 +40,14 @@ func getRedisAddr() string {
 
 func main() {
 	ctx := context.Background()
+
+	if err := otel.InitTracing("device-service"); err != nil {
+		log.Printf("⚠️ tracing initialization failed: %v", err)
+	} else {
+		defer func() {
+			_ = otel.ShutdownTracing(context.Background())
+		}()
+	}
 
 	// Initialize PostgreSQL connection pool
 	log.Println("Connecting to PostgreSQL...")

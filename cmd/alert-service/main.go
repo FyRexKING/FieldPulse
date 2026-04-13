@@ -23,6 +23,10 @@ const alertServicePort = 50053
 func main() {
 	if err := otel.InitTracing("alert-service"); err != nil {
 		log.Printf("⚠️ tracing initialization failed: %v", err)
+	} else {
+		defer func() {
+			_ = otel.ShutdownTracing(context.Background())
+		}()
 	}
 
 	// Database connection

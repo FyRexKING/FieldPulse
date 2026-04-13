@@ -15,9 +15,9 @@ import (
 	"syscall"
 	"time"
 
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	pb "fieldpulse.io/api/proto"
 	"fieldpulse.io/internal/otel"
+	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"gopkg.in/yaml.v2"
@@ -54,11 +54,11 @@ type SubscriptionConfig struct {
 }
 
 type inboundMessage struct {
-	brokerName    string
-	subscription  SubscriptionConfig
-	topic         string
-	payload       []byte
-	receivedAt    time.Time
+	brokerName   string
+	subscription SubscriptionConfig
+	topic        string
+	payload      []byte
+	receivedAt   time.Time
 }
 
 type payloadModel struct {
@@ -86,6 +86,10 @@ type brokerWorker struct {
 func main() {
 	if err := otel.InitTracing("connector"); err != nil {
 		log.Printf("⚠️ tracing initialization failed: %v", err)
+	} else {
+		defer func() {
+			_ = otel.ShutdownTracing(context.Background())
+		}()
 	}
 
 	cfgPath := resolveConfigPath()
@@ -202,7 +206,7 @@ func (w *brokerWorker) start() error {
 	opts.SetAutoReconnect(true)
 	opts.SetConnectRetry(true)
 	opts.SetMaxReconnectInterval(time.Duration(w.cfg.ReconnectDelayMS) * time.Millisecond)
-	
+
 	opts.SetConnectionLostHandler(func(_ mqtt.Client, err error) {
 		log.Printf("⚠️ broker %s connection lost: %v", w.cfg.Name, err)
 	})
